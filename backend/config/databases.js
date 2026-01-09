@@ -79,11 +79,11 @@ export const databases = {
     ]
   },
   Others: {
-    id: process.env.DB_OTHERS,
-    icon: '📦',
-    specGroups: []
-  }
-};
+  id: process.env.DB_OTHERS,
+  icon: '📦',
+  specGroups: []
+},
 config: {
   id: process.env.DB_CONFIG
 }
+};
