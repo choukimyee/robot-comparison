@@ -124,18 +124,52 @@ app.get('/api/robots/:category', async (req, res) => {
 });
 
 // 保存配置
-app.post('/api/config/:category', (req, res) => {
+app.post('/api/config/:category', async (req, res) => {
   try {
-    const { specGroups } = req.body;
-    const configPath = path.join(__dirname, '../config', `${req.params.category}.json`);
-    
-    const configDir = path.join(__dirname, '../config');
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true });
+    const category = req.params.category;
+    const configDb = databases.config;
+    if (!configDb?.id) {
+      return res.status(400).json({error: 'Config database not configured'});
     }
     
-    fs.writeFileSync(configPath, JSON.stringify({ specGroups }, null, 2));
-    console.log('✅ 配置已保存:', req.params.category);
+    const { specGroups } = req.body;
+    const configText = JSON.stringify({ specGroups });
+    
+    // 查找是否已存在
+    const response = await notion.databases.query({
+      database_id: configDb.id,
+      filter: {
+        property: 'Category',
+        title: { equals: category }
+      }
+    });
+    
+    if (response.results.length > 0) {
+      // 更新
+      await notion.pages.update({
+        page_id: response.results[0].id,
+        properties: {
+          Config: {
+            rich_text: [{ text: { content: configText } }]
+          }
+        }
+      });
+    } else {
+      // 创建
+      await notion.pages.create({
+        parent: { database_id: configDb.id },
+        properties: {
+          Category: {
+            title: [{ text: { content: category } }]
+          },
+          Config: {
+            rich_text: [{ text: { content: configText } }]
+          }
+        }
+      });
+    }
+    
+    console.log('✅ 配置已保存到 Notion:', category);
     res.json({ success: true });
   } catch (e) {
     console.error('❌ 保存配置错误:', e.message);
@@ -144,12 +178,26 @@ app.post('/api/config/:category', (req, res) => {
 });
 
 // 读取配置
-app.get('/api/config/:category', (req, res) => {
+app.get('/api/config/:category', async (req, res) => {
   try {
-    const configPath = path.join(__dirname, '../config', `${req.params.category}.json`);
-    if (fs.existsSync(configPath)) {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      console.log('📖 配置已加载:', req.params.category);
+    const category = req.params.category;
+    const configDb = databases.config;
+    if (!configDb?.id) {
+      return res.json({ specGroups: null });
+    }
+    
+    const response = await notion.databases.query({
+      database_id: configDb.id,
+      filter: {
+        property: 'Category',
+        title: { equals: category }
+      }
+    });
+    
+    if (response.results.length > 0) {
+      const configText = response.results[0].properties.Config?.rich_text?.[0]?.plain_text || '{}';
+      const config = JSON.parse(configText);
+      console.log('📖 配置已从 Notion 加载:', category);
       res.json(config);
     } else {
       console.log('📋 无保存配置，返回空');
