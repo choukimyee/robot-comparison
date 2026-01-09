@@ -84,3 +84,6 @@ export const databases = {
     specGroups: []
   }
 };
+config: {
+  id: process.env.DB_CONFIG
+}
