@@ -9,20 +9,21 @@ const notion = new Client({ auth: process.env.NOTION_TOKEN });
 app.use(cors());
 app.use(express.json());
 
-const DB_CONFIG = process.env.DB_CONFIG || process.env.DATABASE_ID; // 配置数据库ID
+// 配置数据库 ID
+const DB_CONFIG = process.env.DB_CONFIG || '2e361bed8f1c80b7b408f9210a57ef58';
 
-// 数据库映射
+// 机器人数据库映射
 const databases = {
-  humanoid: process.env.DB_HUMANOID,
-  quadruped: process.env.DB_QUADRUPED,
-  vacuum: process.env.DB_VACUUM,
-  pool_cleaner: process.env.DB_POOL_CLEANER,
-  lawn_mower: process.env.DB_LAWN_MOWER,
-  industrial: process.env.DB_INDUSTRIAL,
-  wheeled: process.env.DB_WHEELED,
-  companion: process.env.DB_COMPANION,
-  drone: process.env.DB_DRONE,
-  others: process.env.DB_OTHERS
+  humanoid: process.env.DB_HUMANOID || '5287fbe07a1f459f9641ef25da1d604b',
+  quadruped: process.env.DB_QUADRUPED || 'c14806f5048b4a29b616d5ec93b3d53c',
+  vacuum: process.env.DB_VACUUM || '9c845bdc3ec54ddfae1381eed85c480f',
+  pool_cleaner: process.env.DB_POOL_CLEANER || '24a8ebb8167a4acfa7c555a3529cef90',
+  lawn_mower: process.env.DB_LAWN_MOWER || '0797ce98f8464c7abe2c25644d43978b',
+  industrial: process.env.DB_INDUSTRIAL || '2a4638597dd945e492adccd286da0615',
+  wheeled: process.env.DB_WHEELED || '4009dbfc313949cc8900f70ffadc26a5',
+  companion: process.env.DB_COMPANION || '9a3a7a3d3ee744e3905843ab967b4f27',
+  drone: process.env.DB_DRONE || '0acb01e2fbeb494f9876c004aacbcb5a',
+  others: process.env.DB_OTHERS || '925a0db1fd3e48a3b2a09e7d300ea8e5'
 };
 
 // 分类配置
@@ -39,114 +40,9 @@ const categories = [
   { id: 'others', name: 'Others', icon: '📦' }
 ];
 
-// ===== 配置 API 路由 =====
-
-// GET /api/config/:category - 读取配置
-app.get('/api/config/:category', async (req, res) => {
-  try {
-    const { category } = req.params;
-    console.log(`📖 读取配置: ${category}`);
-
-    if (!DB_CONFIG) {
-      return res.json({ specGroups: [] });
-    }
-
-    // 查询配置数据库
-    const response = await notion.databases.query({
-      database_id: DB_CONFIG,
-      filter: {
-        property: 'Category',
-        title: {
-          equals: category
-        }
-      }
-    });
-
-    if (response.results.length > 0) {
-      const page = response.results[0];
-      const configText = page.properties.Config?.rich_text?.[0]?.plain_text || '{}';
-      const config = JSON.parse(configText);
-      console.log(`✅ 配置已加载: ${category}`);
-      return res.json(config);
-    }
-
-    console.log(`📋 无配置，返回空: ${category}`);
-    res.json({ specGroups: [] });
-  } catch (error) {
-    console.error('❌ 读取配置失败:', error.message);
-    res.json({ specGroups: [] });
-  }
-});
-
-// POST /api/config/:category - 保存配置
-app.post('/api/config/:category', async (req, res) => {
-  try {
-    const { category } = req.params;
-    const { specGroups } = req.body;
-    console.log(`💾 保存配置: ${category}`);
-
-    if (!DB_CONFIG) {
-      return res.status(500).json({ error: 'DB_CONFIG not configured' });
-    }
-
-    // 查询是否已存在
-    const queryResponse = await notion.databases.query({
-      database_id: DB_CONFIG,
-      filter: {
-        property: 'Category',
-        title: {
-          equals: category
-        }
-      }
-    });
-
-    const configText = JSON.stringify({ specGroups });
-
-    if (queryResponse.results.length > 0) {
-      // 更新现有配置
-      const pageId = queryResponse.results[0].id;
-      await notion.pages.update({
-        page_id: pageId,
-        properties: {
-          Config: {
-            rich_text: [{
-              text: { content: configText }
-            }]
-          }
-        }
-      });
-      console.log(`✅ 配置已更新: ${category}`);
-    } else {
-      // 创建新配置
-      await notion.pages.create({
-        parent: { database_id: DB_CONFIG },
-        properties: {
-          Category: {
-            title: [{
-              text: { content: category }
-            }]
-          },
-          Config: {
-            rich_text: [{
-              text: { content: configText }
-            }]
-          }
-        }
-      });
-      console.log(`✅ 配置已创建: ${category}`);
-    }
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error('❌ 保存配置失败:', error.message);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ===== 原有的机器人数据 API =====
-
 // GET /api/categories
 app.get('/api/categories', (req, res) => {
+  console.log('📋 返回分类列表');
   res.json(categories);
 });
 
@@ -154,17 +50,17 @@ app.get('/api/categories', (req, res) => {
 app.get('/api/robots/:category', async (req, res) => {
   try {
     const { category } = req.params;
+    console.log(`🤖 获取机器人数据: ${category}`);
+    
     const databaseId = databases[category];
-
     if (!databaseId) {
+      console.error(`❌ 分类不存在: ${category}`);
       return res.status(404).json({ error: 'Category not found' });
     }
 
-    const response = await notion.databases.retrieve({
-      database_id: databaseId
-    });
+    const dbResponse = await notion.databases.retrieve({ database_id: databaseId });
+    const schema = dbResponse.properties;
 
-    const schema = response.properties;
     const properties = Object.keys(schema)
       .filter(key => !['Model', 'Company', 'Image'].includes(key) && !key.startsWith('KSP-'))
       .map(key => ({ name: key, type: schema[key].type }));
@@ -187,13 +83,11 @@ app.get('/api/robots/:category', async (req, res) => {
         ksp: []
       };
 
-      // KSP
       for (let i = 1; i <= 5; i++) {
         const kspKey = `KSP-${i}`;
         robot.ksp.push(props[kspKey]?.rich_text?.[0]?.plain_text || '');
       }
 
-      // 其他参数
       Object.keys(schema).forEach(key => {
         if (key === 'Model' || key === 'Company' || key === 'Image' || key.startsWith('KSP-')) return;
         
@@ -214,17 +108,96 @@ app.get('/api/robots/:category', async (req, res) => {
           case 'url':
             robot.specs[key] = prop.url || null;
             break;
-          default:
-            break;
         }
       });
 
       return robot;
     });
 
+    console.log(`✅ 返回 ${robots.length} 个机器人`);
     res.json({ robots, properties, hasKSP });
   } catch (error) {
-    console.error('Error:', error);
+    console.error('❌ 获取机器人数据失败:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/config/:category
+app.get('/api/config/:category', async (req, res) => {
+  try {
+    const { category } = req.params;
+    console.log(`📖 读取配置: ${category}`);
+
+    const response = await notion.databases.query({
+      database_id: DB_CONFIG,
+      filter: {
+        property: 'Category',
+        title: { equals: category }
+      }
+    });
+
+    if (response.results.length > 0) {
+      const page = response.results[0];
+      const configText = page.properties.Config?.rich_text?.[0]?.plain_text || '{}';
+      const config = JSON.parse(configText);
+      console.log(`✅ 配置已加载: ${category}`);
+      return res.json(config);
+    }
+
+    console.log(`📋 无配置，返回空: ${category}`);
+    res.json({ specGroups: [] });
+  } catch (error) {
+    console.error('❌ 读取配置失败:', error);
+    res.json({ specGroups: [] });
+  }
+});
+
+// POST /api/config/:category
+app.post('/api/config/:category', async (req, res) => {
+  try {
+    const { category } = req.params;
+    const { specGroups } = req.body;
+    console.log(`💾 保存配置: ${category}`);
+
+    const queryResponse = await notion.databases.query({
+      database_id: DB_CONFIG,
+      filter: {
+        property: 'Category',
+        title: { equals: category }
+      }
+    });
+
+    const configText = JSON.stringify({ specGroups });
+
+    if (queryResponse.results.length > 0) {
+      const pageId = queryResponse.results[0].id;
+      await notion.pages.update({
+        page_id: pageId,
+        properties: {
+          Config: {
+            rich_text: [{ text: { content: configText } }]
+          }
+        }
+      });
+      console.log(`✅ 配置已更新: ${category}`);
+    } else {
+      await notion.pages.create({
+        parent: { database_id: DB_CONFIG },
+        properties: {
+          Category: {
+            title: [{ text: { content: category } }]
+          },
+          Config: {
+            rich_text: [{ text: { content: configText } }]
+          }
+        }
+      });
+      console.log(`✅ 配置已创建: ${category}`);
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('❌ 保存配置失败:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -232,5 +205,6 @@ app.get('/api/robots/:category', async (req, res) => {
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📊 配置数据库 ID: ${DB_CONFIG || '未配置'}`);
+  console.log(`📊 配置数据库: ${DB_CONFIG}`);
+  console.log(`📦 已加载 ${Object.keys(databases).length} 个分类`);
 });
