@@ -41,6 +41,12 @@ const categories = [
 
 // Routes without /api prefix for Vercel serverless function
 // Vercel's api/ directory already handles /api routing
+
+// Test route to verify serverless function is working
+app.get('/', (req, res) => {
+  res.json({ message: 'API server is running', routes: ['/categories', '/admin-config', '/robots/:category', '/config/:category'] });
+});
+
 app.get('/categories', (req, res) => {
   console.log('📋 返回分类列表');
   res.json(categories);
