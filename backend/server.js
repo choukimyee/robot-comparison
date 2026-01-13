@@ -2,31 +2,27 @@ import express from 'express';
 import { Client } from '@notionhq/client';
 import cors from 'cors';
 import dotenv from 'dotenv';
-
 dotenv.config();
 
 const app = express();
 const notion = new Client({ auth: process.env.NOTION_TOKEN });
-
 app.use(cors());
 app.use(express.json());
 
-const DB_CONFIG = process.env.DB_CONFIG || '515b8bdd9b0c80c6abc4e5f56a037a6b';
-
+const DB_CONFIG = process.env.DB_CONFIG;
 const databases = {
-  humanoid: process.env.DB_HUMANOID || '5287fbe07a1f459f9641ef25da1d604b',
-  quadruped: process.env.DB_QUADRUPED || 'c14806f5048b4a29b616d5ec93b3d53c',
-  vacuum: process.env.DB_VACUUM || '9c845bdc3ec54ddfae1381eed85c480f',
-  pool_cleaner: process.env.DB_POOL_CLEANER || '24a8ebb8167a4acfa7c555a3529cef90',
-  lawn_mower: process.env.DB_LAWN_MOWER || '0797ce98f8464c7abe2c25644d43978b',
-  industrial: process.env.DB_INDUSTRIAL || '2a4638597dd945e492adccd286da0615',
-  wheeled: process.env.DB_WHEELED || '4009dbfc313949cc8900f70ffadc26a5',
-  companion: process.env.DB_COMPANION || '9a3a7a3d3ee744e3905843ab967b4f27',
-  drone: process.env.DB_DRONE || '0acb01e2fbeb494f9876c004aacbcb5a',
-  others: process.env.DB_OTHERS || '925a0db1fd3e48a3b2a09e7d300ea8e5'
+  humanoid: process.env.DB_HUMANOID,
+  quadruped: process.env.DB_QUADRUPED,
+  vacuum: process.env.DB_VACUUM,
+  pool_cleaner: process.env.DB_POOL_CLEANER,
+  lawn_mower: process.env.DB_LAWN_MOWER,
+  industrial: process.env.DB_INDUSTRIAL,
+  wheeled: process.env.DB_WHEELED,
+  companion: process.env.DB_COMPANION,
+  drone: process.env.DB_DRONE,
+  others: process.env.DB_OTHERS
 };
 
-const categories = [
   { id: 'humanoid', name: 'Humanoid', icon: '🤖' },
   { id: 'quadruped', name: 'Quadruped', icon: '🐕' },
   { id: 'vacuum', name: 'Vacuum', icon: '🧹' },
@@ -39,128 +35,143 @@ const categories = [
   { id: 'others', name: 'Others', icon: '📦' }
 ];
 
-app.get('/api/categories', (req, res) => {
-  console.log('📋 返回分类列表');
+const configCache = {};
+app.get('/api/categories', function(req, res) {
   res.json(categories);
 });
-
-app.get('/api/robots/:category', async (req, res) => {
+app.get('/api/robots/:category', async function(req, res) {
   try {
-    const { category } = req.params;
-    console.log(`🤖 获取机器人数据: ${category}`);
-    
-    const databaseId = databases[category];
-    if (!databaseId) {
-      console.error(`❌ 分类不存在: ${category}`);
-      return res.status(404).json({ error: 'Category not found' });
+    var cat = req.params.category;
+    var dbId = databases[cat];
+    if (!dbId) return res.status(404).json({ error: 'Not found' });
+    var dbInfo = await notion.databases.retrieve({ database_id: dbId });
+    var schema = dbInfo['properties'];
+    var result = await notion.databases.query({ database_id: dbId, page_size: 100 });
+    var hasKSP = Object.keys(schema).some(function(k) { return k.indexOf('KSP') === 0; });
+    var props = [];
+    var okTypes = ['title','rich_text','number','select','multi_select','checkbox','url'];
+    for (var n in schema) {
+      if (okTypes.indexOf(schema[n].type) >= 0) props.push({name: n, type: schema[n].type});
     }
-
-    const dbResponse = await notion.databases.retrieve({ database_id: databaseId });
-    const schema = dbResponse.properties;
-
-    const properties = Object.keys(schema)
-      .filter(key => !['Model', 'Company', 'Image'].includes(key) && !key.startsWith('KSP-'))
-      .map(key => ({ name: key, type: schema[key].type }));
-
-    const hasKSP = Object.keys(schema).some(key => key.startsWith('KSP-'));
-
-    const queryResponse = await notion.databases.query({
-      database_id: databaseId,
-      sorts: [{ property: 'Company', direction: 'ascending' }]
-    });
-
-    const robots = queryResponse.results.map(page => {
-      const props = page.properties;
-      const robot = {
-        id: page.id,
-        model: props.Model?.title?.[0]?.plain_text || '',
-        company: props.Company?.select?.name || '',
-        image: props.Image?.files?.[0]?.file?.url || props.Image?.files?.[0]?.external?.url || null,
-        specs: {},
-        ksp: []
-      };
-
-      for (let i = 1; i <= 5; i++) {
-        const kspKey = `KSP-${i}`;
-        robot.ksp.push(props[kspKey]?.rich_text?.[0]?.plain_text || '');
+    // 继续 Part B...
+      var robots = [];
+    var skip = ['Model','Company','Image','Name','Brand'];
+    for (var i = 0; i < result.results.length; i++) {
+      var pg = result.results[i];
+      var p = pg['properties'];
+      var specs = {}, ksp = [];
+      for (var k in p) {
+        var v = extractValue(p[k]);
+        if (k.indexOf('KSP-') === 0) ksp[parseInt(k.replace('KSP-',''))-1] = v;
+        else if (skip.indexOf(k) < 0) specs[k] = v;
       }
-
-      Object.keys(schema).forEach(key => {
-        if (key === 'Model' || key === 'Company' || key === 'Image' || key.startsWith('KSP-')) return;
-        const prop = props[key];
-        if (!prop) return;
-        switch (schema[key].type) {
-          case 'number': robot.specs[key] = prop.number; break;
-          case 'select': robot.specs[key] = prop.select?.name || null; break;
-          case 'rich_text':
-          case 'text': robot.specs[key] = prop.rich_text?.[0]?.plain_text || null; break;
-          case 'url': robot.specs[key] = prop.url || null; break;
-        }
+      robots.push({
+        id: pg['id'],
+        model: extractValue(p['Model']) || extractValue(p['Name']) || 'Unknown',
+        company: extractValue(p['Company']) || extractValue(p['Brand']) || 'Unknown',
+        image: extractValue(p['Image']),
+        specs: specs,
+        ksp: ksp.filter(function(x){return x;})
       });
-      return robot;
-    });
-
-    console.log(`✅ 返回 ${robots.length} 个机器人`);
-    res.json({ robots, properties, hasKSP });
-  } catch (error) {
-    console.error('❌ 获取机器人数据失败:', error);
-    res.status(500).json({ error: error.message });
-  }
+    }
+    res.json({ robots: robots, properties: props, hasKSP: hasKSP });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
-
-app.get('/api/config/:category', async (req, res) => {
+app.get('/api/config/:category', async function(req, res) {
   try {
-    const { category } = req.params;
-    const response = await notion.databases.query({
-      database_id: DB_CONFIG,
-      filter: { property: 'Category', title: { equals: category } }
-    });
-    if (response.results.length > 0) {
-      const configText = response.results[0].properties.Config?.rich_text?.[0]?.plain_text || '{}';
-      return res.json(JSON.parse(configText));
+    var cat = req.params.category;
+    if (configCache[cat]) return res.json({ specGroups: configCache[cat] });
+    if (DB_CONFIG) {
+      var r = await notion.databases.query({
+        database_id: DB_CONFIG,
+        filter: { property: 'Category', rich_text: { equals: cat } }
+      });
+      if (r.results.length > 0) {
+        var json = extractValue(r.results[0]['properties']['Config']);
+        if (json) {
+          configCache[cat] = JSON.parse(json);
+          return res.json({ specGroups: configCache[cat] });
+        }
+      }
     }
     res.json({ specGroups: [] });
-  } catch (error) {
-    console.error('❌ 读取配置失败:', error);
-    res.json({ specGroups: [] });
-  }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
-
-app.post('/api/config/:category', async (req, res) => {
+app.post('/api/config/:category', async function(req, res) {
   try {
-    const { category } = req.params;
-    const { specGroups } = req.body;
-    const queryResponse = await notion.databases.query({
-      database_id: DB_CONFIG,
-      filter: { property: 'Category', title: { equals: category } }
-    });
-    const configText = JSON.stringify({ specGroups });
-    if (queryResponse.results.length > 0) {
-      await notion.pages.update({
-        page_id: queryResponse.results[0].id,
-        properties: { Config: { rich_text: [{ text: { content: configText } }] } }
+    var cat = req.params.category;
+    var sg = req.body.specGroups;
+    configCache[cat] = sg;
+    
+    if (DB_CONFIG) {
+      var r = await notion.databases.query({
+        database_id: DB_CONFIG,
+        filter: { property: 'Category', rich_text: { equals: cat } }
       });
-      console.log(`✅ 配置已更新: ${category}`);
-    } else {
-      await notion.pages.create({
-        parent: { database_id: DB_CONFIG },
-        properties: {
-          Category: { title: [{ text: { content: category } }] },
-          Config: { rich_text: [{ text: { content: configText } }] }
-        }
-      });
-      console.log(`✅ 配置已创建: ${category}`);
+      var json = JSON.stringify(sg);
+      var txt = [{ text: { content: json.slice(0, 2000) } }];
+      
+      if (r.results.length > 0) {
+        await notion.pages.update({
+          page_id: r.results[0].id,
+          properties: { Config: { rich_text: txt } }
+        });
+      } else {
+        await notion.pages.create({
+          parent: { database_id: DB_CONFIG },
+          properties: {
+            Category: { rich_text: [{ text: { content: cat } }] },
+            Config: { rich_text: txt }
+          }
+        });
+      }
     }
     res.json({ success: true });
-  } catch (error) {
-    console.error('❌ 保存配置失败:', error);
-    res.status(500).json({ error: error.message });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
+function extractValue(prop) {
+  if (!prop) return null;
+  var t = prop.type;
+  
+  if (t === 'title') {
+    return prop.title[0] ? prop.title[0].plain_text : null;
+  }
+  if (t === 'rich_text') {
+    return prop.rich_text[0] ? prop.rich_text[0].plain_text : null;
+  }
+  if (t === 'number') {
+    return prop.number;
+  }
+  if (t === 'select') {
+    return prop.select ? prop.select.name : null;
+  }
+  if (t === 'multi_select') {
+    return prop.multi_select.map(function(s) { return s.name; }).join(', ');
+  }
+  if (t === 'checkbox') {
+    return prop.checkbox ? 'Yes' : 'No';
+  }
+  if (t === 'url') {
+    return prop.url;
+  }
+  if (t === 'files' && prop.files[0]) {
+    var f = prop.files[0];
+    return f.file ? f.file.url : (f.external ? f.external.url : null);
+  }
+  if (t === 'formula') {
+    return prop.formula.string || prop.formula.number;
+  }
+  
+  return null;
+}
+var PORT = process.env.PORT || 3000;
 
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, function() {
+    console.log('🚀 Server running on port', PORT);
+  });
+}
 
 export default app;
