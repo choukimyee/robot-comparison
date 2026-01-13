@@ -1,2 +1,1 @@
-# RobotSpecs
-Demonstrate Embodied Intelligent Robotics Specs
+# Robot Comparison Platform
